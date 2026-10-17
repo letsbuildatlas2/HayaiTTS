@@ -197,13 +197,12 @@ class HayaiTtsService : TextToSpeechService() {
             return
         }
 
-        // Atlas low-latency experiment: forward native synthesis chunks directly
-        // to Android instead of waiting for the entire waveform to be generated.
-        // Android's synthesis callback is sequential and applies backpressure.
-        var deliveryFailed = false
-        var receivedAudioChunks = 0
+        // Diagnostic baseline: bypass the native streaming callback entirely.
+        // Previous builds could stall after Android onStart without producing PCM.
+        // First establish that the isolated Android TTS service can play buffered audio.
+        log.i { "Atlas baseline: buffered synthesis starting voice=${voice.voiceId} chars=${text.length}" }
         try {
-            runtime.synthesizeStreaming(
+            val output = runtime.synthesize(
                 voiceId = voice.voiceId,
                 text = text,
                 sid = sid,
@@ -213,51 +212,18 @@ class HayaiTtsService : TextToSpeechService() {
                 noiseScale = tuning.noiseScale,
                 noiseScaleW = tuning.noiseScaleW,
                 languageHint = requestLanguageHint,
-            ) { samples ->
-                receivedAudioChunks++
-                if (stopRequested || deliveryFailed) {
-                    0
-                } else {
-                    // Return zero to native synthesis if Android rejects a buffer.
-                    val delivered = streamPcm(callback, samples)
-                    if (!delivered) deliveryFailed = true
-                    if (stopRequested || deliveryFailed) 0 else 1
-                }
-            }
-        } catch (t: Throwable) {
-            log.e(t) { "Streaming sherpa-onnx synthesis failed" }
-            callback.error()
-            return
-        }
-
-        if (deliveryFailed) {
-            log.e { "Android rejected streamed PCM after $receivedAudioChunks chunks" }
-            callback.error()
-            return
-        }
-        if (receivedAudioChunks == 0) {
-            // Some models/native builds return a complete waveform without
-            // invoking generateWithCallback's incremental callback.
-            // Never report a successful silent utterance in that case.
-            log.w { "No streaming chunks received; retrying with buffered synthesis" }
-            try {
-                val output = runtime.synthesize(
-                    voiceId = voice.voiceId, text = text, sid = sid, speed = speed,
-                    pitch = tuning.pitch, lengthScale = tuning.lengthScale,
-                    noiseScale = tuning.noiseScale, noiseScaleW = tuning.noiseScaleW,
-                    languageHint = requestLanguageHint,
-                )
-                if (!streamPcm(callback, output.samples)) {
-                    callback.error()
-                    return
-                }
-            } catch (t: Throwable) {
-                log.e(t) { "Buffered fallback synthesis failed" }
+            )
+            log.i { "Atlas baseline: synthesis produced ${output.samples.size} samples" }
+            if (output.samples.isEmpty() || !streamPcm(callback, output.samples)) {
+                log.e { "Atlas baseline: no samples or PCM delivery failed" }
                 callback.error()
                 return
             }
+            callback.done()
+        } catch (t: Throwable) {
+            log.e(t) { "Atlas baseline: buffered synthesis failed" }
+            callback.error()
         }
-        callback.done()
     }
 
     private fun runtimeOrNull(): SherpaTtsRuntime? = runCatching {
