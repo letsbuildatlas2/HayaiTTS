@@ -201,6 +201,7 @@ class HayaiTtsService : TextToSpeechService() {
         // to Android instead of waiting for the entire waveform to be generated.
         // Android's synthesis callback is sequential and applies backpressure.
         var deliveryFailed = false
+        var receivedAudioChunks = 0
         try {
             runtime.synthesizeStreaming(
                 voiceId = voice.voiceId,
@@ -213,6 +214,7 @@ class HayaiTtsService : TextToSpeechService() {
                 noiseScaleW = tuning.noiseScaleW,
                 languageHint = requestLanguageHint,
             ) { samples ->
+                receivedAudioChunks++
                 if (stopRequested || deliveryFailed) {
                     0
                 } else {
@@ -229,8 +231,31 @@ class HayaiTtsService : TextToSpeechService() {
         }
 
         if (deliveryFailed) {
+            log.e { "Android rejected streamed PCM after $receivedAudioChunks chunks" }
             callback.error()
             return
+        }
+        if (receivedAudioChunks == 0) {
+            // Some models/native builds return a complete waveform without
+            // invoking generateWithCallback's incremental callback.
+            // Never report a successful silent utterance in that case.
+            log.w { "No streaming chunks received; retrying with buffered synthesis" }
+            try {
+                val output = runtime.synthesize(
+                    voiceId = voice.voiceId, text = text, sid = sid, speed = speed,
+                    pitch = tuning.pitch, lengthScale = tuning.lengthScale,
+                    noiseScale = tuning.noiseScale, noiseScaleW = tuning.noiseScaleW,
+                    languageHint = requestLanguageHint,
+                )
+                if (!streamPcm(callback, output.samples)) {
+                    callback.error()
+                    return
+                }
+            } catch (t: Throwable) {
+                log.e(t) { "Buffered fallback synthesis failed" }
+                callback.error()
+                return
+            }
         }
         callback.done()
     }
