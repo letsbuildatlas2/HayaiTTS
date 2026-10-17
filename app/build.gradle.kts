@@ -29,6 +29,7 @@ android {
 
     defaultConfig {
         applicationId = "dev.ahmedmohamed.hayaitts"
+        manifestPlaceholders["atlasAppLabel"] = "HayaiTTS"
         minSdk = 26
         targetSdk = 36
         versionCode = 204
@@ -86,6 +87,12 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Install beside the official HayaiTTS app without replacing its data.
+            applicationIdSuffix = ".atlasstream"
+            versionNameSuffix = "-atlas-stream-test"
+            manifestPlaceholders["atlasAppLabel"] = "HayaiTTS Stream Test"
+        }
         release {
             // R8 + resource shrinker stay on regardless of signing source.
             isMinifyEnabled = true
