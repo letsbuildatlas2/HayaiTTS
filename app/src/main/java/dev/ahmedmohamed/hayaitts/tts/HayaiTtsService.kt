@@ -197,8 +197,12 @@ class HayaiTtsService : TextToSpeechService() {
             return
         }
 
-        val output = try {
-            runtime.synthesize(
+        // Atlas low-latency experiment: forward native synthesis chunks directly
+        // to Android instead of waiting for the entire waveform to be generated.
+        // Android's synthesis callback is sequential and applies backpressure.
+        var deliveryFailed = false
+        try {
+            runtime.synthesizeStreaming(
                 voiceId = voice.voiceId,
                 text = text,
                 sid = sid,
@@ -208,19 +212,26 @@ class HayaiTtsService : TextToSpeechService() {
                 noiseScale = tuning.noiseScale,
                 noiseScaleW = tuning.noiseScaleW,
                 languageHint = requestLanguageHint,
-            )
+            ) { samples ->
+                if (stopRequested || deliveryFailed) {
+                    0
+                } else {
+                    // Return zero to native synthesis if Android rejects a buffer.
+                    val delivered = streamPcm(callback, samples)
+                    if (!delivered) deliveryFailed = true
+                    if (stopRequested || deliveryFailed) 0 else 1
+                }
+            }
         } catch (t: Throwable) {
-            log.e(t) { "sherpa-onnx synthesis failed" }
+            log.e(t) { "Streaming sherpa-onnx synthesis failed" }
             callback.error()
             return
         }
 
-        if (stopRequested) {
-            callback.done()
+        if (deliveryFailed) {
+            callback.error()
             return
         }
-
-        streamPcm(callback, output.samples)
         callback.done()
     }
 
@@ -286,7 +297,7 @@ class HayaiTtsService : TextToSpeechService() {
      * and stream them through [SynthesisCallback.audioAvailable] in chunks no
      * larger than [SynthesisCallback.maxBufferSize].
      */
-    private fun streamPcm(callback: SynthesisCallback, samples: FloatArray) {
+    private fun streamPcm(callback: SynthesisCallback, samples: FloatArray): Boolean {
         val maxBufferBytes = callback.maxBufferSize.coerceAtLeast(BYTES_PER_SAMPLE * 64)
         val chunkBytes = (maxBufferBytes and 0x7FFFFFFE)
         val samplesPerChunk = chunkBytes / BYTES_PER_SAMPLE
@@ -308,9 +319,10 @@ class HayaiTtsService : TextToSpeechService() {
                 buffer[writeIdx + 1] = ((clamped shr 8) and 0xFF).toByte()
                 writeIdx += 2
             }
-            if (callback.audioAvailable(buffer, 0, writeIdx) != TextToSpeech.SUCCESS) return
+            if (callback.audioAvailable(buffer, 0, writeIdx) != TextToSpeech.SUCCESS) return false
             sampleCursor += take
         }
+        return !stopRequested
     }
 
     private companion object {
