@@ -347,7 +347,13 @@ class HayaiTtsService : TextToSpeechService() {
                 buffer[writeIdx + 1] = ((clamped shr 8) and 0xFF).toByte()
                 writeIdx += 2
             }
-            if (callback.audioAvailable(buffer, 0, writeIdx) != TextToSpeech.SUCCESS) return false
+            val deliveryStartMs = SystemClock.elapsedRealtime()
+            val result = callback.audioAvailable(buffer, 0, writeIdx)
+            val deliveryMs = SystemClock.elapsedRealtime() - deliveryStartMs
+            if (sampleCursor == 0) {
+                AtlasTtsDiagnostics.record(applicationContext, "first PCM callback returned in ${deliveryMs}ms; bytes=$writeIdx; audioSamples=${samples.size}")
+            }
+            if (result != TextToSpeech.SUCCESS) return false
             sampleCursor += take
         }
         return !stopRequested
