@@ -1,0 +1,33 @@
+name: Validate sherpa JNI callback patch
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - experiment/native-callback-probe
+    paths:
+      - 'native/**'
+      - '.github/workflows/validate-sherpa-jni.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout exact sherpa-onnx version
+        run: git clone --depth 1 --branch v1.13.2 https://github.com/k2-fsa/sherpa-onnx.git upstream-sherpa
+      - name: Apply native JNI fix
+        run: python3 native/patch_sherpa_jni_callbacks.py upstream-sherpa/sherpa-onnx/jni/offline-tts.cc
+      - name: Check both callback paths patched
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s = Path('upstream-sherpa/sherpa-onnx/jni/offline-tts.cc').read_text()
+          assert '[env, callback]' not in s
+          assert s.count('vm->GetEnv(') == 2
+          assert s.count('env->DeleteGlobalRef(global_callback)') == 2
+          print('Both callback paths use per-thread JNIEnv and global references.')
+          PY
