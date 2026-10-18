@@ -220,8 +220,17 @@ class HayaiTtsService : TextToSpeechService() {
             return
         }
 
-        streamPcm(callback, output.samples)
-        callback.done()
+        if (output.sampleRate != sampleRate) {
+            log.e { "PCM sample rate mismatch" }
+            callback.error()
+            return
+        }
+        if (streamPcm(callback, output.samples)) {
+            callback.done()
+        } else {
+            log.e { "PCM delivery stopped or rejected by Android" }
+            if (!stopRequested) callback.error()
+        }
     }
 
     private fun runtimeOrNull(): SherpaTtsRuntime? = runCatching {
@@ -286,9 +295,13 @@ class HayaiTtsService : TextToSpeechService() {
      * and stream them through [SynthesisCallback.audioAvailable] in chunks no
      * larger than [SynthesisCallback.maxBufferSize].
      */
-    private fun streamPcm(callback: SynthesisCallback, samples: FloatArray) {
-        val maxBufferBytes = callback.maxBufferSize.coerceAtLeast(BYTES_PER_SAMPLE * 64)
-        val chunkBytes = (maxBufferBytes and 0x7FFFFFFE)
+    private fun streamPcm(callback: SynthesisCallback, samples: FloatArray): Boolean {
+        // Respect the framework's hard maximum; never impose a larger minimum.
+        val chunkBytes = callback.maxBufferSize and 0x7FFFFFFE
+        if (chunkBytes < BYTES_PER_SAMPLE) {
+            log.e { "Invalid TTS callback buffer size" }
+            return false
+        }
         val samplesPerChunk = chunkBytes / BYTES_PER_SAMPLE
         val buffer = ByteArray(chunkBytes)
 
@@ -308,9 +321,15 @@ class HayaiTtsService : TextToSpeechService() {
                 buffer[writeIdx + 1] = ((clamped shr 8) and 0xFF).toByte()
                 writeIdx += 2
             }
-            if (callback.audioAvailable(buffer, 0, writeIdx) != TextToSpeech.SUCCESS) return
+            val status = callback.audioAvailable(buffer, 0, writeIdx)
+            if (status != TextToSpeech.SUCCESS) {
+                log.e { "Android rejected PCM chunk with status " + status }
+                return false
+            }
             sampleCursor += take
         }
+        log.i { "PCM delivered samples=" + sampleCursor + " bytes=" + (sampleCursor * BYTES_PER_SAMPLE) }
+        return !stopRequested
     }
 
     private companion object {
