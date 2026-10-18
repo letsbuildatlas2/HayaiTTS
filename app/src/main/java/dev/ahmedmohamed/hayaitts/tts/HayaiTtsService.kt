@@ -37,6 +37,7 @@ class HayaiTtsService : TextToSpeechService() {
     override fun onIsLanguageAvailable(lang: String?, country: String?, variant: String?): Int {
         val voices = runtimeOrNull()?.listAvailableVoices().orEmpty()
         val requested = buildBcp47(lang, country, variant)
+        log.i { "Atlas voice registry: language request=$lang/$country/$variant parsed=$requested available=${voices.size}" }
         return when {
             requested.isEmpty() -> TextToSpeech.LANG_NOT_SUPPORTED
             voices.any { it.matchesLocale(requested) } -> TextToSpeech.LANG_AVAILABLE
@@ -61,6 +62,7 @@ class HayaiTtsService : TextToSpeechService() {
 
     override fun onGetVoices(): List<Voice> {
         val voices = runtimeOrNull()?.listAvailableVoices().orEmpty()
+        log.i { "Atlas voice registry: onGetVoices installed=${voices.size} speakerCounts=${voices.map { it.voiceId to it.speakers.size }}" }
         return voices.flatMap { voice ->
             if (voice.speakers.size > 1) {
                 voice.speakers.map { speaker ->
@@ -81,11 +83,18 @@ class HayaiTtsService : TextToSpeechService() {
         }
     }
 
-    override fun onIsValidVoiceName(name: String?): Int =
-        if (resolveVoiceName(name) != null) TextToSpeech.SUCCESS else TextToSpeech.ERROR
+    override fun onIsValidVoiceName(name: String?): Int {
+        val accepted = resolveVoiceName(name) != null
+        log.i { "Atlas voice registry: onIsValidVoiceName name=$name accepted=$accepted" }
+        return if (accepted) TextToSpeech.SUCCESS else TextToSpeech.ERROR
+    }
 
     override fun onLoadVoice(name: String?): Int {
-        if (resolveVoiceName(name) == null) return TextToSpeech.ERROR
+        if (resolveVoiceName(name) == null) {
+            log.w { "Atlas voice registry: onLoadVoice rejected name=$name" }
+            return TextToSpeech.ERROR
+        }
+        log.i { "Atlas voice registry: onLoadVoice accepted name=$name" }
         lastSelectedVoiceId = name!!
         return TextToSpeech.SUCCESS
     }
