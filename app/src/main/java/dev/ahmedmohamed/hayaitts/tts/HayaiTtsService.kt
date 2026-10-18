@@ -224,7 +224,7 @@ class HayaiTtsService : TextToSpeechService() {
         log.i { "Atlas timing: Android callback.start=${SystemClock.elapsedRealtime() - callbackStartMs}ms sinceRequest=${SystemClock.elapsedRealtime() - requestStartMs}ms" }
 
         // Experimental phrase mode is strictly opt-in; normal Atlas speech stays buffered.
-        val phraseMode = System.getProperty("atlas.tts.phraseMode") == "true"
+        val phraseMode = runCatching { runBlocking { settingsRepo?.atlasPhraseMode?.first() } }.getOrNull() == true
         if (phraseMode && text.length > 55) {
             val splitAt = sequenceOf(
                 text.indexOf(". "), text.indexOf(", "), text.indexOf("; "),
