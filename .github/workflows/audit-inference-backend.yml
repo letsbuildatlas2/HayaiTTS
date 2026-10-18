@@ -32,6 +32,13 @@ jobs:
             echo "$pattern: ${count:-0}" | tee -a audit/report.md
           done
           echo '' | tee -a audit/report.md
+          echo '## ONNX Runtime binary provider indicators' | tee -a audit/report.md
+          unzip -p "$AAR" jni/arm64-v8a/libonnxruntime.so > audit/onnxruntime.so
+          for pattern in XnnpackExecutionProvider XNNPACKExecutionProvider Xnnpack OrtSessionOptionsAppendExecutionProvider_Xnnpack QNNExecutionProvider NNAPIExecutionProvider; do
+            count=$(grep -aoc "$pattern" audit/onnxruntime.so || true)
+            echo "$pattern: ${count:-0}" | tee -a audit/report.md
+          done
+          echo '' | tee -a audit/report.md
           echo '## Native library dependencies' | tee -a audit/report.md
           readelf -d audit/sherpa-jni.so | grep NEEDED | tee -a audit/report.md || true
           echo '' | tee -a audit/report.md
