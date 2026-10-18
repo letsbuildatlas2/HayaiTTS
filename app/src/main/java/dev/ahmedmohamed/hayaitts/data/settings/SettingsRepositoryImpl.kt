@@ -64,6 +64,12 @@ class SettingsRepositoryImpl(
         store.edit { it[KEY_USE_NNAPI] = value }
     }
 
+    override val atlasPhraseMode: Flow<Boolean> = store.data.map { it[KEY_ATLAS_PHRASE_MODE] ?: false }
+
+    override suspend fun setAtlasPhraseMode(value: Boolean) {
+        store.edit { it[KEY_ATLAS_PHRASE_MODE] = value }
+    }
+
     override val synthesisThreads: Flow<Int> = store.data.map { it[KEY_SYNTHESIS_THREADS] ?: 2 }
 
     override suspend fun setSynthesisThreads(value: Int) {
@@ -123,6 +129,7 @@ class SettingsRepositoryImpl(
         val KEY_UPDATE_CHANNEL = stringPreferencesKey("update_channel")
         val KEY_LAST_UPDATE_CHECK = longPreferencesKey("last_update_check_ms")
         val KEY_USE_NNAPI = booleanPreferencesKey("use_nnapi")
+        val KEY_ATLAS_PHRASE_MODE = booleanPreferencesKey("atlas_phrase_mode")
         val KEY_SYNTHESIS_THREADS = intPreferencesKey("synthesis_threads")
         val KEY_MAX_NUM_SENTENCES = intPreferencesKey("max_num_sentences")
         val KEY_DEFAULT_SPEAKERS = stringPreferencesKey("default_speakers_json")
