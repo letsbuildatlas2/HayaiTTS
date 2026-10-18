@@ -2,6 +2,9 @@ name: Atlas experimental HayaiTTS APK
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feature/atlas-streaming-tts
 
 permissions:
   contents: read
