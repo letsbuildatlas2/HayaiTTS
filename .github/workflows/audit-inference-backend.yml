@@ -39,6 +39,8 @@ jobs:
           grep -n -A 2 'provider = if (useNnapi)' app/src/main/java/dev/ahmedmohamed/hayaitts/tts/SherpaTtsRuntime.kt | tee -a audit/report.md
           echo '' | tee -a audit/report.md
           echo 'Binary string indicators alone cannot prove runtime provider availability or model operator coverage.' | tee -a audit/report.md
+          cat audit/report.md >> "$GITHUB_STEP_SUMMARY"
+          cat audit/report.md
       - uses: actions/upload-artifact@v4
         with:
           name: kokoro-inference-audit
