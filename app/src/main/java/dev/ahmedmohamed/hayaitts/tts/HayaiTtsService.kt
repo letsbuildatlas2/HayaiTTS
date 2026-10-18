@@ -1,6 +1,7 @@
 package dev.ahmedmohamed.hayaitts.tts
 
 import android.media.AudioFormat
+import android.os.SystemClock
 import android.speech.tts.SynthesisCallback
 import android.speech.tts.SynthesisRequest
 import android.speech.tts.TextToSpeech
@@ -123,6 +124,7 @@ class HayaiTtsService : TextToSpeechService() {
 
     override fun onSynthesizeText(request: SynthesisRequest, callback: SynthesisCallback) {
         stopRequested = false
+        val requestStartMs = SystemClock.elapsedRealtime()
 
         val rawText = request.charSequenceText?.toString().orEmpty()
         val text = if (rawText.length > MAX_TEXT_LENGTH) {
@@ -183,6 +185,7 @@ class HayaiTtsService : TextToSpeechService() {
             ?: voice.speakers.firstOrNull()?.id
             ?: 0
 
+        val modelPrepareStartMs = SystemClock.elapsedRealtime()
         val sampleRate = try {
             runtime.sampleRateOf(voice.voiceId, languageHint = requestLanguageHint)
         } catch (t: Throwable) {
@@ -190,6 +193,8 @@ class HayaiTtsService : TextToSpeechService() {
             callback.error()
             return
         }
+
+        log.i { "Atlas timing: model/sample-rate lookup=${SystemClock.elapsedRealtime() - modelPrepareStartMs}ms sinceRequest=${SystemClock.elapsedRealtime() - requestStartMs}ms" }
 
         if (callback.start(sampleRate, AudioFormat.ENCODING_PCM_16BIT, /* channelCount = */ 1)
             != TextToSpeech.SUCCESS
@@ -201,6 +206,7 @@ class HayaiTtsService : TextToSpeechService() {
         // Previous builds could stall after Android onStart without producing PCM.
         // First establish that the isolated Android TTS service can play buffered audio.
         log.i { "Atlas baseline: buffered synthesis starting voice=${voice.voiceId} chars=${text.length}" }
+        val synthesisStartMs = SystemClock.elapsedRealtime()
         try {
             val output = runtime.synthesize(
                 voiceId = voice.voiceId,
@@ -213,12 +219,13 @@ class HayaiTtsService : TextToSpeechService() {
                 noiseScaleW = tuning.noiseScaleW,
                 languageHint = requestLanguageHint,
             )
-            log.i { "Atlas baseline: synthesis produced ${output.samples.size} samples" }
+            log.i { "Atlas timing: buffered generate=${SystemClock.elapsedRealtime() - synthesisStartMs}ms sinceRequest=${SystemClock.elapsedRealtime() - requestStartMs}ms samples=${output.samples.size}" }
             if (output.samples.isEmpty() || !streamPcm(callback, output.samples)) {
                 log.e { "Atlas baseline: no samples or PCM delivery failed" }
                 callback.error()
                 return
             }
+            log.i { "Atlas timing: PCM delivered sinceRequest=${SystemClock.elapsedRealtime() - requestStartMs}ms" }
             callback.done()
         } catch (t: Throwable) {
             log.e(t) { "Atlas baseline: buffered synthesis failed" }
