@@ -2,7 +2,6 @@ package dev.ahmedmohamed.hayaitts.tts
 
 import android.media.AudioFormat
 import android.os.SystemClock
-import android.os.Process
 import android.os.PowerManager
 import android.content.Context
 import android.speech.tts.SynthesisCallback
@@ -229,7 +228,7 @@ class HayaiTtsService : TextToSpeechService() {
         // First establish that the isolated Android TTS service can play buffered audio.
         log.i { "Atlas baseline: buffered synthesis starting voice=${voice.voiceId} chars=${text.length}" }
         val synthesisStartMs = SystemClock.elapsedRealtime()
-        val cpuStartNs = Process.getThreadCpuTimeNanos()
+        val cpuStartNs = android.os.Debug.threadCpuTimeNanos()
         val power = getSystemService(Context.POWER_SERVICE) as? PowerManager
         val thermalBefore = if (android.os.Build.VERSION.SDK_INT >= 29) power?.currentThermalStatus else null
         AtlasTtsDiagnostics.record(applicationContext, "inference begin thermal=$thermalBefore thread=${Thread.currentThread().name}")
@@ -245,7 +244,7 @@ class HayaiTtsService : TextToSpeechService() {
                 noiseScaleW = tuning.noiseScaleW,
                 languageHint = requestLanguageHint,
             )
-            val cpuMs = (Process.getThreadCpuTimeNanos() - cpuStartNs) / 1_000_000L
+            val cpuMs = (android.os.Debug.threadCpuTimeNanos() - cpuStartNs) / 1_000_000L
             val thermalAfter = if (android.os.Build.VERSION.SDK_INT >= 29) power?.currentThermalStatus else null
             AtlasTtsDiagnostics.record(applicationContext, "native generation ${SystemClock.elapsedRealtime() - synthesisStartMs}ms; total ${SystemClock.elapsedRealtime() - requestStartMs}ms; samples=${output.samples.size}; cpuMs=$cpuMs; thermal=$thermalBefore->$thermalAfter; sampleRate=${output.sampleRate}")
             log.i { "Atlas timing: buffered generate=${SystemClock.elapsedRealtime() - synthesisStartMs}ms sinceRequest=${SystemClock.elapsedRealtime() - requestStartMs}ms samples=${output.samples.size}" }
