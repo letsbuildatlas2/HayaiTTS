@@ -248,6 +248,24 @@ class HayaiTtsService : TextToSpeechService() {
                 }
                 AtlasTtsDiagnostics.record(applicationContext,
                     "native callback probe complete elapsed=${SystemClock.elapsedRealtime() - probeStart}ms chunks=${chunks.get()} first=${firstChunkMs}ms samples=${probe.samples.size}")
+                // Read only this app process's native diagnostics; no PC or READ_LOGS
+                // permission required on devices permitting self-process logcat.
+                runCatching {
+                    val process = ProcessBuilder("logcat", "-d", "-t", "150", "--pid=${android.os.Process.myPid()}", "AtlasNativeJNI:I", "*:S")
+                        .redirectErrorStream(true).start()
+                    val reader = process.inputStream.bufferedReader()
+                    val lines = mutableListOf<String>()
+                    repeat(40) {
+                        val line = reader.readLine() ?: return@repeat
+                        if (line.contains("AtlasNativeJNI")) lines.add(line.take(240))
+                    }
+                    process.destroy()
+                    AtlasTtsDiagnostics.record(applicationContext,
+                        "native logcat lines=${lines.size}; ${lines.takeLast(6).joinToString(" | ")}")
+                }.onFailure {
+                    AtlasTtsDiagnostics.record(applicationContext,
+                        "native logcat unavailable: ${it.javaClass.simpleName}")
+                }
                 if (!stopRequested && probe.samples.isNotEmpty() && streamPcm(callback, probe.samples)) {
                     callback.done()
                 } else callback.error()
