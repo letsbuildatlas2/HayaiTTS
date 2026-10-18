@@ -2,6 +2,9 @@ package dev.ahmedmohamed.hayaitts.tts
 
 import android.media.AudioFormat
 import android.os.SystemClock
+import android.os.Process
+import android.os.PowerManager
+import android.content.Context
 import android.speech.tts.SynthesisCallback
 import android.speech.tts.SynthesisRequest
 import android.speech.tts.TextToSpeech
@@ -226,6 +229,10 @@ class HayaiTtsService : TextToSpeechService() {
         // First establish that the isolated Android TTS service can play buffered audio.
         log.i { "Atlas baseline: buffered synthesis starting voice=${voice.voiceId} chars=${text.length}" }
         val synthesisStartMs = SystemClock.elapsedRealtime()
+        val cpuStartNs = Process.getThreadCpuTimeNanos()
+        val power = getSystemService(Context.POWER_SERVICE) as? PowerManager
+        val thermalBefore = if (android.os.Build.VERSION.SDK_INT >= 29) power?.currentThermalStatus else null
+        AtlasTtsDiagnostics.record(applicationContext, "inference begin thermal=$thermalBefore thread=${Thread.currentThread().name}")
         try {
             val output = runtime.synthesize(
                 voiceId = voice.voiceId,
@@ -238,18 +245,21 @@ class HayaiTtsService : TextToSpeechService() {
                 noiseScaleW = tuning.noiseScaleW,
                 languageHint = requestLanguageHint,
             )
-            AtlasTtsDiagnostics.record(applicationContext, "native generation ${SystemClock.elapsedRealtime() - synthesisStartMs}ms; total ${SystemClock.elapsedRealtime() - requestStartMs}ms; samples=${output.samples.size}")
+            val cpuMs = (Process.getThreadCpuTimeNanos() - cpuStartNs) / 1_000_000L
+            val thermalAfter = if (android.os.Build.VERSION.SDK_INT >= 29) power?.currentThermalStatus else null
+            AtlasTtsDiagnostics.record(applicationContext, "native generation ${SystemClock.elapsedRealtime() - synthesisStartMs}ms; total ${SystemClock.elapsedRealtime() - requestStartMs}ms; samples=${output.samples.size}; cpuMs=$cpuMs; thermal=$thermalBefore->$thermalAfter; sampleRate=${output.sampleRate}")
             log.i { "Atlas timing: buffered generate=${SystemClock.elapsedRealtime() - synthesisStartMs}ms sinceRequest=${SystemClock.elapsedRealtime() - requestStartMs}ms samples=${output.samples.size}" }
             val pcmStartMs = SystemClock.elapsedRealtime()
             if (output.samples.isEmpty() || !streamPcm(callback, output.samples)) {
+                AtlasTtsDiagnostics.record(applicationContext, "PCM delivery failed or stopped; empty=${output.samples.isEmpty()}; stopped=$stopRequested")
                 log.e { "Atlas baseline: no samples or PCM delivery failed" }
                 callback.error()
                 return
             }
             AtlasTtsDiagnostics.record(applicationContext, "PCM delivered in ${SystemClock.elapsedRealtime() - pcmStartMs}ms; total ${SystemClock.elapsedRealtime() - requestStartMs}ms")
             log.i { "Atlas timing: PCM delivery=${SystemClock.elapsedRealtime() - pcmStartMs}ms sinceRequest=${SystemClock.elapsedRealtime() - requestStartMs}ms" }
-            callback.done()
-            AtlasTtsDiagnostics.record(applicationContext, "speech completed total ${SystemClock.elapsedRealtime() - requestStartMs}ms")
+            val doneResult = callback.done()
+            AtlasTtsDiagnostics.record(applicationContext, "speech completed total ${SystemClock.elapsedRealtime() - requestStartMs}ms; callbackDone=$doneResult; stopped=$stopRequested")
         } catch (t: Throwable) {
             AtlasTtsDiagnostics.record(applicationContext, "speech failed after ${SystemClock.elapsedRealtime() - requestStartMs}ms: ${t.javaClass.simpleName}")
             log.e(t) { "Atlas baseline: buffered synthesis failed" }
