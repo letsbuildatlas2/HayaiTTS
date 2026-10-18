@@ -140,11 +140,13 @@ class HayaiTtsService : TextToSpeechService() {
             rawText.substring(0, MAX_TEXT_LENGTH)
         } else rawText
 
+        AtlasTtsDiagnostics.record(applicationContext, "request chars=${text.length}")
         log.i { "Atlas timing: request received chars=${text.length}" }
         val runtime = try {
             SherpaTtsRuntime.get(applicationContext)
         } catch (t: Throwable) {
             log.e(t) { "Failed to initialise SherpaTtsRuntime" }
+            AtlasTtsDiagnostics.record(applicationContext, "runtime initialisation failed after ${SystemClock.elapsedRealtime() - requestStartMs}ms: ${t.javaClass.simpleName}")
             callback.error()
             return
         }
@@ -206,6 +208,7 @@ class HayaiTtsService : TextToSpeechService() {
             return
         }
 
+        AtlasTtsDiagnostics.record(applicationContext, "model/sample-rate ready after ${SystemClock.elapsedRealtime() - requestStartMs}ms")
         log.i { "Atlas timing: model/sample-rate lookup=${SystemClock.elapsedRealtime() - modelPrepareStartMs}ms sinceRequest=${SystemClock.elapsedRealtime() - requestStartMs}ms" }
 
         val callbackStartMs = SystemClock.elapsedRealtime()
@@ -215,6 +218,7 @@ class HayaiTtsService : TextToSpeechService() {
             return
         }
 
+        AtlasTtsDiagnostics.record(applicationContext, "Android synthesis start after ${SystemClock.elapsedRealtime() - requestStartMs}ms")
         log.i { "Atlas timing: Android callback.start=${SystemClock.elapsedRealtime() - callbackStartMs}ms sinceRequest=${SystemClock.elapsedRealtime() - requestStartMs}ms" }
 
         // Diagnostic baseline: bypass the native streaming callback entirely.
@@ -234,6 +238,7 @@ class HayaiTtsService : TextToSpeechService() {
                 noiseScaleW = tuning.noiseScaleW,
                 languageHint = requestLanguageHint,
             )
+            AtlasTtsDiagnostics.record(applicationContext, "native generation ${SystemClock.elapsedRealtime() - synthesisStartMs}ms; total ${SystemClock.elapsedRealtime() - requestStartMs}ms; samples=${output.samples.size}")
             log.i { "Atlas timing: buffered generate=${SystemClock.elapsedRealtime() - synthesisStartMs}ms sinceRequest=${SystemClock.elapsedRealtime() - requestStartMs}ms samples=${output.samples.size}" }
             val pcmStartMs = SystemClock.elapsedRealtime()
             if (output.samples.isEmpty() || !streamPcm(callback, output.samples)) {
@@ -241,9 +246,12 @@ class HayaiTtsService : TextToSpeechService() {
                 callback.error()
                 return
             }
+            AtlasTtsDiagnostics.record(applicationContext, "PCM delivered in ${SystemClock.elapsedRealtime() - pcmStartMs}ms; total ${SystemClock.elapsedRealtime() - requestStartMs}ms")
             log.i { "Atlas timing: PCM delivery=${SystemClock.elapsedRealtime() - pcmStartMs}ms sinceRequest=${SystemClock.elapsedRealtime() - requestStartMs}ms" }
             callback.done()
+            AtlasTtsDiagnostics.record(applicationContext, "speech completed total ${SystemClock.elapsedRealtime() - requestStartMs}ms")
         } catch (t: Throwable) {
+            AtlasTtsDiagnostics.record(applicationContext, "speech failed after ${SystemClock.elapsedRealtime() - requestStartMs}ms: ${t.javaClass.simpleName}")
             log.e(t) { "Atlas baseline: buffered synthesis failed" }
             callback.error()
         }
