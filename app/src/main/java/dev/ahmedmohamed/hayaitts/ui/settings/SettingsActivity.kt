@@ -219,7 +219,7 @@ fun SettingsScreen(
         *state.installedLocales.toTypedArray(),
     )
     val showStorageSection = matches(labelTotalSize, labelClearCache)
-    val showPerfSection = matches(labelNnapi, labelThreads, labelMaxSentences, "Atlas phrase experiment")
+    val showPerfSection = matches(labelNnapi, labelThreads, labelMaxSentences, "Atlas native callback probe")
     val showUpdatesSection = matches(labelUpdateChannel, labelCurrentVersion, labelCheckUpdates, labelLastChecked)
     val showAboutSection = matches(labelAppName, labelHelp, labelLicense, labelPoweredBy)
 
@@ -439,7 +439,7 @@ fun SettingsScreen(
                 ListItem(
                     leadingContent = { Icon(Icons.Outlined.Bolt, contentDescription = null) },
                     headlineContent = { Text("Atlas phrase experiment") },
-                    supportingContent = { Text("Experimental early audio. Disable to restore stable buffered speech.") },
+                    supportingContent = { Text("Diagnostic only: tests native callback without audio playback during inference. Disable for normal speech.") },
                     trailingContent = {
                         Switch(checked = state.atlasPhraseMode, onCheckedChange = viewModel::setAtlasPhraseMode)
                     },
