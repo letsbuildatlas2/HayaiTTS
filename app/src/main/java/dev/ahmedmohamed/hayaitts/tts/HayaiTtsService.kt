@@ -307,22 +307,47 @@ class HayaiTtsService : TextToSpeechService() {
         AtlasTtsDiagnostics.record(applicationContext, "benchmark config threads=$activeThreads nnapi=$activeNnapi voice=${voice.voiceId} chars=${text.length}")
         AtlasTtsDiagnostics.record(applicationContext, "buffered inference begin thermal=$thermalBefore thread=${Thread.currentThread().name}")
         try {
-            val output = runtime.synthesize(
-                voiceId = voice.voiceId, text = text, sid = sid, speed = speed,
-                pitch = tuning.pitch, lengthScale = tuning.lengthScale,
-                noiseScale = tuning.noiseScale, noiseScaleW = tuning.noiseScaleW,
-                languageHint = requestLanguageHint,
-            )
+            val segments = firstAudioSegments(text)
+            AtlasTtsDiagnostics.record(applicationContext,
+                "experimental segments=${segments.size} lengths=${segments.map { it.length }}")
+            var deliveredSamples = 0
+            for ((segmentIndex, segment) in segments.withIndex()) {
+                if (stopRequested) {
+                    AtlasTtsDiagnostics.record(applicationContext,
+                        "experimental segment cancelled index=$segmentIndex")
+                    callback.error()
+                    return
+                }
+                val segmentStartedMs = SystemClock.elapsedRealtime()
+                val output = runtime.synthesize(
+                    voiceId = voice.voiceId, text = segment, sid = sid, speed = speed,
+                    pitch = tuning.pitch, lengthScale = tuning.lengthScale,
+                    noiseScale = tuning.noiseScale, noiseScaleW = tuning.noiseScaleW,
+                    languageHint = requestLanguageHint,
+                )
+                val generationMs = SystemClock.elapsedRealtime() - segmentStartedMs
+                if (output.samples.isEmpty()) {
+                    AtlasTtsDiagnostics.record(applicationContext,
+                        "experimental segment empty index=$segmentIndex")
+                    callback.error()
+                    return
+                }
+                AtlasTtsDiagnostics.record(applicationContext,
+                    "experimental segment generated index=$segmentIndex generationMs=$generationMs totalMs=${SystemClock.elapsedRealtime() - requestStartMs} samples=${output.samples.size}")
+                if (!streamPcm(callback, output.samples)) {
+                    AtlasTtsDiagnostics.record(applicationContext,
+                        "experimental segment delivery failed index=$segmentIndex stopped=$stopRequested")
+                    callback.error()
+                    return
+                }
+                deliveredSamples += output.samples.size
+                AtlasTtsDiagnostics.record(applicationContext,
+                    "experimental segment delivered index=$segmentIndex totalMs=${SystemClock.elapsedRealtime() - requestStartMs}")
+            }
             val cpuMs = (android.os.Debug.threadCpuTimeNanos() - cpuStartNs) / 1_000_000L
             val thermalAfter = if (android.os.Build.VERSION.SDK_INT >= 29) power?.currentThermalStatus else null
-            AtlasTtsDiagnostics.record(applicationContext, "native generation ${SystemClock.elapsedRealtime() - synthesisStartMs}ms; total ${SystemClock.elapsedRealtime() - requestStartMs}ms; samples=${output.samples.size}; cpuMs=$cpuMs; thermal=$thermalBefore->$thermalAfter; sampleRate=${output.sampleRate}")
-            val pcmStartMs = SystemClock.elapsedRealtime()
-            if (output.samples.isEmpty() || !streamPcm(callback, output.samples)) {
-                AtlasTtsDiagnostics.record(applicationContext, "PCM delivery failed or stopped; empty=${output.samples.isEmpty()}; stopped=$stopRequested")
-                callback.error()
-                return
-            }
-            AtlasTtsDiagnostics.record(applicationContext, "PCM delivered in ${SystemClock.elapsedRealtime() - pcmStartMs}ms; total ${SystemClock.elapsedRealtime() - requestStartMs}ms")
+            AtlasTtsDiagnostics.record(applicationContext,
+                "experimental speech generated segments=${segments.size} samples=$deliveredSamples cpuMs=$cpuMs thermal=$thermalBefore->$thermalAfter")
             val doneResult = callback.done()
             AtlasTtsDiagnostics.record(applicationContext, "speech completed total ${SystemClock.elapsedRealtime() - requestStartMs}ms; callbackDone=$doneResult; stopped=$stopRequested")
         } catch (t: Throwable) {
@@ -330,6 +355,20 @@ class HayaiTtsService : TextToSpeechService() {
             log.e(t) { "Atlas buffered synthesis failed" }
             callback.error()
         }
+    }
+
+    /**
+     * Experimental first-audio split. Only split at an existing sentence
+     * boundary, preserving the exact spoken words and punctuation.
+     * Never cut a word or create an artificial phrase.
+     */
+    private fun firstAudioSegments(text: String): List<String> {
+        if (text.length < 70) return listOf(text)
+        val boundary = Regex("[.!?]\\s+").findAll(text)
+            .map { it.range.last + 1 }
+            .firstOrNull { it in 18..65 && text.length - it >= 12 }
+            ?: return listOf(text)
+        return listOf(text.substring(0, boundary).trim(), text.substring(boundary).trim())
     }
 
     private fun runtimeOrNull(): SherpaTtsRuntime? = runCatching {
