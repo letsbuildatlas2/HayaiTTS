@@ -298,7 +298,12 @@ class SherpaTtsRuntime private constructor(
     ): OfflineTts = synchronized(this) {
         val settings = runCatching { GlobalContext.get().get<SettingsRepository>() }.getOrNull()
         val useNnapi = runCatching { runBlocking { settings?.useNnapi?.first() } }.getOrNull() ?: false
-        val numThreads = runCatching { runBlocking { settings?.synthesisThreads?.first() } }.getOrNull() ?: 2
+        // Controlled performance experiment: override only when explicitly supplied.
+        // Default behavior remains the user's existing synthesis thread setting.
+        val configuredThreads = runCatching { runBlocking { settings?.synthesisThreads?.first() } }.getOrNull() ?: 2
+        val benchmarkThreads = System.getProperty("atlas.tts.benchmarkThreads")?.toIntOrNull()
+        val numThreads = benchmarkThreads?.takeIf { it in 1..8 } ?: configuredThreads
+        log.i { "Atlas thread config: active=$numThreads configured=$configuredThreads benchmarkOverride=$benchmarkThreads" }
         val maxNumSentences = runCatching { runBlocking { settings?.maxNumSentences?.first() } }.getOrNull() ?: 2
         val voice = installedVoiceOf(voiceId)
             ?: error("Voice $voiceId is not installed; reinstall the bundle.")
