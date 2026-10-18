@@ -29,6 +29,9 @@ interface SettingsRepository {
     val useNnapi: Flow<Boolean>
     suspend fun setUseNnapi(value: Boolean)
 
+    val atlasPhraseMode: Flow<Boolean>
+    suspend fun setAtlasPhraseMode(value: Boolean)
+
     val synthesisThreads: Flow<Int>
     suspend fun setSynthesisThreads(value: Int)
 
