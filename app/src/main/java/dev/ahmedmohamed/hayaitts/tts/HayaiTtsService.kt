@@ -223,17 +223,18 @@ class HayaiTtsService : TextToSpeechService() {
         AtlasTtsDiagnostics.record(applicationContext, "Android synthesis start after ${SystemClock.elapsedRealtime() - requestStartMs}ms")
         log.i { "Atlas timing: Android callback.start=${SystemClock.elapsedRealtime() - callbackStartMs}ms sinceRequest=${SystemClock.elapsedRealtime() - requestStartMs}ms" }
 
-        // Diagnostic baseline: bypass the native streaming callback entirely.
-        // Previous builds could stall after Android onStart without producing PCM.
-        // First establish that the isolated Android TTS service can play buffered audio.
-        log.i { "Atlas baseline: buffered synthesis starting voice=${voice.voiceId} chars=${text.length}" }
+        // Stream PCM as sherpa-onnx produces it; only retry buffered synthesis
+        // when streaming fails before delivering any audio to Android.
         val synthesisStartMs = SystemClock.elapsedRealtime()
         val cpuStartNs = android.os.Debug.threadCpuTimeNanos()
         val power = getSystemService(Context.POWER_SERVICE) as? PowerManager
         val thermalBefore = if (android.os.Build.VERSION.SDK_INT >= 29) power?.currentThermalStatus else null
-        AtlasTtsDiagnostics.record(applicationContext, "inference begin thermal=$thermalBefore thread=${Thread.currentThread().name}")
+        AtlasTtsDiagnostics.record(applicationContext, "stream inference begin thermal=$thermalBefore thread=${Thread.currentThread().name}")
+        var deliveredSamples = 0L
+        var chunks = 0
+        var deliveryFailed = false
         try {
-            val output = runtime.synthesize(
+            runtime.synthesizeStreaming(
                 voiceId = voice.voiceId,
                 text = text,
                 sid = sid,
@@ -243,26 +244,58 @@ class HayaiTtsService : TextToSpeechService() {
                 noiseScale = tuning.noiseScale,
                 noiseScaleW = tuning.noiseScaleW,
                 languageHint = requestLanguageHint,
-            )
+            ) { samples ->
+                if (stopRequested || deliveryFailed) {
+                    0
+                } else if (samples.isEmpty()) {
+                    1
+                } else {
+                    if (chunks == 0) {
+                        AtlasTtsDiagnostics.record(applicationContext, "first stream chunk after ${SystemClock.elapsedRealtime() - requestStartMs}ms; samples=${samples.size}")
+                    }
+                    if (streamPcm(callback, samples)) {
+                        chunks++
+                        deliveredSamples += samples.size
+                        1
+                    } else {
+                        deliveryFailed = true
+                        0
+                    }
+                }
+            }
+            if (deliveryFailed || stopRequested || deliveredSamples == 0L) {
+                throw IllegalStateException("Streaming stopped or delivered no PCM")
+            }
             val cpuMs = (android.os.Debug.threadCpuTimeNanos() - cpuStartNs) / 1_000_000L
-            val thermalAfter = if (android.os.Build.VERSION.SDK_INT >= 29) power?.currentThermalStatus else null
-            AtlasTtsDiagnostics.record(applicationContext, "native generation ${SystemClock.elapsedRealtime() - synthesisStartMs}ms; total ${SystemClock.elapsedRealtime() - requestStartMs}ms; samples=${output.samples.size}; cpuMs=$cpuMs; thermal=$thermalBefore->$thermalAfter; sampleRate=${output.sampleRate}")
-            log.i { "Atlas timing: buffered generate=${SystemClock.elapsedRealtime() - synthesisStartMs}ms sinceRequest=${SystemClock.elapsedRealtime() - requestStartMs}ms samples=${output.samples.size}" }
-            val pcmStartMs = SystemClock.elapsedRealtime()
-            if (output.samples.isEmpty() || !streamPcm(callback, output.samples)) {
-                AtlasTtsDiagnostics.record(applicationContext, "PCM delivery failed or stopped; empty=${output.samples.isEmpty()}; stopped=$stopRequested")
-                log.e { "Atlas baseline: no samples or PCM delivery failed" }
+            AtlasTtsDiagnostics.record(applicationContext, "stream complete total=${SystemClock.elapsedRealtime() - requestStartMs}ms; generation=${SystemClock.elapsedRealtime() - synthesisStartMs}ms; chunks=$chunks; samples=$deliveredSamples; cpuMs=$cpuMs")
+            val doneResult = callback.done()
+            AtlasTtsDiagnostics.record(applicationContext, "speech completed total ${SystemClock.elapsedRealtime() - requestStartMs}ms; callbackDone=$doneResult; stopped=$stopRequested")
+        } catch (streamError: Throwable) {
+            AtlasTtsDiagnostics.record(applicationContext, "stream failed after ${SystemClock.elapsedRealtime() - requestStartMs}ms; chunks=$chunks; reason=${streamError.javaClass.simpleName}")
+            if (chunks > 0 || stopRequested || deliveryFailed) {
+                // Never replay already-delivered audio or restart a cancelled request.
                 callback.error()
                 return
             }
-            AtlasTtsDiagnostics.record(applicationContext, "PCM delivered in ${SystemClock.elapsedRealtime() - pcmStartMs}ms; total ${SystemClock.elapsedRealtime() - requestStartMs}ms")
-            log.i { "Atlas timing: PCM delivery=${SystemClock.elapsedRealtime() - pcmStartMs}ms sinceRequest=${SystemClock.elapsedRealtime() - requestStartMs}ms" }
-            val doneResult = callback.done()
-            AtlasTtsDiagnostics.record(applicationContext, "speech completed total ${SystemClock.elapsedRealtime() - requestStartMs}ms; callbackDone=$doneResult; stopped=$stopRequested")
-        } catch (t: Throwable) {
-            AtlasTtsDiagnostics.record(applicationContext, "speech failed after ${SystemClock.elapsedRealtime() - requestStartMs}ms: ${t.javaClass.simpleName}")
-            log.e(t) { "Atlas baseline: buffered synthesis failed" }
-            callback.error()
+            try {
+                AtlasTtsDiagnostics.record(applicationContext, "buffered fallback begin")
+                val output = runtime.synthesize(
+                    voiceId = voice.voiceId, text = text, sid = sid, speed = speed,
+                    pitch = tuning.pitch, lengthScale = tuning.lengthScale,
+                    noiseScale = tuning.noiseScale, noiseScaleW = tuning.noiseScaleW,
+                    languageHint = requestLanguageHint,
+                )
+                if (output.samples.isEmpty() || !streamPcm(callback, output.samples)) {
+                    callback.error()
+                    return
+                }
+                AtlasTtsDiagnostics.record(applicationContext, "buffered fallback delivered; total=${SystemClock.elapsedRealtime() - requestStartMs}ms")
+                callback.done()
+            } catch (fallbackError: Throwable) {
+                log.e(fallbackError) { "Atlas streaming and buffered fallback failed" }
+                AtlasTtsDiagnostics.record(applicationContext, "fallback failed: ${fallbackError.javaClass.simpleName}")
+                callback.error()
+            }
         }
     }
 
