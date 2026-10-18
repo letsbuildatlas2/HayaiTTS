@@ -407,7 +407,11 @@ class HayaiTtsService : TextToSpeechService() {
             if (sampleCursor == 0) {
                 AtlasTtsDiagnostics.record(applicationContext, "first PCM callback returned in ${deliveryMs}ms; bytes=$writeIdx; audioSamples=${samples.size}")
             }
-            if (result != TextToSpeech.SUCCESS) return false
+            if (result != TextToSpeech.SUCCESS) {
+                AtlasTtsDiagnostics.record(applicationContext,
+                    "PCM callback rejected chunk offset=$sampleCursor of ${samples.size} samples result=$result elapsed=${deliveryMs}ms stopRequested=$stopRequested")
+                return false
+            }
             sampleCursor += take
         }
         return !stopRequested
