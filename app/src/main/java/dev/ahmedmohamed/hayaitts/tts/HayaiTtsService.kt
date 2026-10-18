@@ -54,6 +54,21 @@ class HayaiTtsService : TextToSpeechService() {
                         .sampleRateOf(george.voiceId)
                     AtlasTtsDiagnostics.record(applicationContext,
                         "service startup preload ready voice=${george.voiceId} sampleRate=$rate elapsed=${SystemClock.elapsedRealtime() - started}ms")
+                    // Experimental: exercise the native graph before the first user request.
+                    // No PCM is played. Keep off the stable branch until measured on device.
+                    val warmupStarted = SystemClock.elapsedRealtime()
+                    try {
+                        val warmup = SherpaTtsRuntime.get(applicationContext).synthesize(
+                            voiceId = george.voiceId,
+                            text = "Hello.",
+                            sid = 9,
+                        )
+                        AtlasTtsDiagnostics.record(applicationContext,
+                            "experimental inference warmup ready elapsed=${SystemClock.elapsedRealtime() - warmupStarted}ms samples=${warmup.samples.size}")
+                    } catch (warmupError: Throwable) {
+                        AtlasTtsDiagnostics.record(applicationContext,
+                            "experimental inference warmup failed: ${warmupError.javaClass.simpleName}")
+                    }
                 } else {
                     AtlasTtsDiagnostics.record(applicationContext,
                         "service startup preload skipped: George not installed")
