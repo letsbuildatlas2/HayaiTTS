@@ -36,7 +36,7 @@ jobs:
         run: |
           if [[ -n "$ATLAS_KEYSTORE_BASE64" && -n "$ATLAS_STORE_PASSWORD" && -n "$ATLAS_KEY_PASSWORD" && -n "$ATLAS_KEY_ALIAS" ]]; then
             printf %s "$ATLAS_KEYSTORE_BASE64" | base64 --decode > atlas-signing.jks
-            printf "storeFile=atlas-signing.jks\\nstorePassword=%s\\nkeyAlias=%s\\nkeyPassword=%s\\n" "$ATLAS_STORE_PASSWORD" "$ATLAS_KEY_ALIAS" "$ATLAS_KEY_PASSWORD" > signing.properties
+            printf "storeFile=atlas-signing.jks\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n" "$ATLAS_STORE_PASSWORD" "$ATLAS_KEY_ALIAS" "$ATLAS_KEY_PASSWORD" > signing.properties
             echo "ATLAS_PERSISTENT_SIGNING=true" >> "$GITHUB_ENV"
             echo "Persistent signing enabled."
           else
