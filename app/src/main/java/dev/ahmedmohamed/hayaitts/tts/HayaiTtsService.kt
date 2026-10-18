@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.koin.core.context.GlobalContext
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * System-wide TTS engine. Iterates every voice the user has installed
@@ -222,6 +223,40 @@ class HayaiTtsService : TextToSpeechService() {
 
         AtlasTtsDiagnostics.record(applicationContext, "Android synthesis start after ${SystemClock.elapsedRealtime() - requestStartMs}ms")
         log.i { "Atlas timing: Android callback.start=${SystemClock.elapsedRealtime() - callbackStartMs}ms sinceRequest=${SystemClock.elapsedRealtime() - requestStartMs}ms" }
+
+        // Explicitly gated native callback probe. No Android audio callback is invoked
+        // from sherpa's JNI callback: this isolates native callback liveness from
+        // Android audioAvailable backpressure and preserves the buffered fallback.
+        if (System.getProperty("atlas.tts.nativeCallbackProbe") == "true") {
+            val probeStart = SystemClock.elapsedRealtime()
+            val chunks = AtomicInteger(0)
+            var firstChunkMs = -1L
+            AtlasTtsDiagnostics.record(applicationContext, "native callback probe begin")
+            try {
+                val probe = runtime.synthesizeStreaming(
+                    voiceId = voice.voiceId, text = text, sid = sid, speed = speed,
+                    pitch = tuning.pitch, lengthScale = tuning.lengthScale,
+                    noiseScale = tuning.noiseScale, noiseScaleW = tuning.noiseScaleW,
+                    languageHint = requestLanguageHint,
+                ) { chunk ->
+                    if (chunks.getAndIncrement() == 0) {
+                        firstChunkMs = SystemClock.elapsedRealtime() - probeStart
+                        AtlasTtsDiagnostics.record(applicationContext,
+                            "native callback first chunk after ${firstChunkMs}ms samples=${chunk.size} thread=${Thread.currentThread().name}")
+                    }
+                    if (stopRequested) 0 else 1
+                }
+                AtlasTtsDiagnostics.record(applicationContext,
+                    "native callback probe complete elapsed=${SystemClock.elapsedRealtime() - probeStart}ms chunks=${chunks.get()} first=${firstChunkMs}ms samples=${probe.samples.size}")
+                if (!stopRequested && probe.samples.isNotEmpty() && streamPcm(callback, probe.samples)) {
+                    callback.done()
+                } else callback.error()
+            } catch (t: Throwable) {
+                AtlasTtsDiagnostics.record(applicationContext, "native callback probe failed: ${t.javaClass.simpleName}")
+                callback.error()
+            }
+            return
+        }
 
         // Stable baseline: native generateWithCallback can stall without returning
         // a first chunk on this device. Use bounded buffered generation instead.
