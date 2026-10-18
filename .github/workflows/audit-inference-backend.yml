@@ -39,6 +39,10 @@ jobs:
             echo "$pattern: ${count:-0}" | tee -a audit/report.md
           done
           echo '' | tee -a audit/report.md
+          echo '## ONNX Runtime provider strings and exported symbols' | tee -a audit/report.md
+          strings audit/onnxruntime.so | grep -i -E 'xnnpack|qnnexecutionprovider|nnapi|cpuExecutionProvider' | sort -u | head -60 | tee -a audit/report.md || true
+          readelf -Ws audit/onnxruntime.so | grep -i -E 'xnnpack|provider' | head -40 | tee -a audit/report.md || true
+          echo '' | tee -a audit/report.md
           echo '## Native library dependencies' | tee -a audit/report.md
           readelf -d audit/sherpa-jni.so | grep NEEDED | tee -a audit/report.md || true
           echo '' | tee -a audit/report.md
