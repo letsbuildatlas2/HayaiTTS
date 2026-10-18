@@ -86,8 +86,13 @@ android {
         }
     }
 
+    // Optional persistent signing for the Atlas debug APK. Only used when
+    // signing.properties exists; otherwise the normal local debug key applies.
+    val atlasDebugSigning = signingConfigs.findByName("release")
+
     buildTypes {
         debug {
+            if (atlasDebugSigning != null) signingConfig = atlasDebugSigning
             // Install beside the official HayaiTTS app without replacing its data.
             applicationIdSuffix = ".atlasstream"
             versionNameSuffix = "-atlas-stream-test"
