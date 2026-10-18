@@ -31,18 +31,22 @@ jobs:
         env:
           ATLAS_KEYSTORE_BASE64: ${{ secrets.ATLAS_KEYSTORE_BASE64 }}
           ATLAS_STORE_PASSWORD: ${{ secrets.ATLAS_STORE_PASSWORD }}
-          ATLAS_KEY_PASSWORD: ${{ secrets.ATLAS_KEY_PASSWORD }}
-          ATLAS_KEY_ALIAS: ${{ secrets.ATLAS_KEY_ALIAS }}
         run: |
-          if [[ -n "$ATLAS_KEYSTORE_BASE64" && -n "$ATLAS_STORE_PASSWORD" && -n "$ATLAS_KEY_PASSWORD" && -n "$ATLAS_KEY_ALIAS" ]]; then
+          if [[ -n "$ATLAS_KEYSTORE_BASE64" && -n "$ATLAS_STORE_PASSWORD"  ]]; then
             printf %s "$ATLAS_KEYSTORE_BASE64" | base64 --decode > atlas-signing.jks
-            printf "storeFile=atlas-signing.jks\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n" "$ATLAS_STORE_PASSWORD" "$ATLAS_KEY_ALIAS" "$ATLAS_KEY_PASSWORD" > signing.properties
+            printf "storeFile=atlas-signing.jks\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n" "$ATLAS_STORE_PASSWORD" "atlas-tts-signing" "$ATLAS_STORE_PASSWORD" > signing.properties
             echo "ATLAS_PERSISTENT_SIGNING=true" >> "$GITHUB_ENV"
             echo "Persistent signing enabled."
           else
             echo "::warning::Persistent signing secrets are not configured. This build is for compilation checks only; do NOT install its APK."
             echo "ATLAS_PERSISTENT_SIGNING=false" >> "$GITHUB_ENV"
           fi
+      - name: Verify persistent signing key
+        if: env.ATLAS_PERSISTENT_SIGNING == 'true'
+        env:
+          ATLAS_STORE_PASSWORD: ${{ secrets.ATLAS_STORE_PASSWORD }}
+        run: |
+          keytool -list -keystore atlas-signing.jks -storetype PKCS12 -storepass "$ATLAS_STORE_PASSWORD" -alias atlas-tts-signing >/dev/null
       - name: Build debug APK
         run: |
           chmod +x gradlew
