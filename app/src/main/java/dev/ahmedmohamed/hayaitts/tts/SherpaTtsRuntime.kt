@@ -3,6 +3,7 @@ package dev.ahmedmohamed.hayaitts.tts
 import android.annotation.SuppressLint
 import android.content.Context
 import co.touchlab.kermit.Logger
+import android.os.SystemClock
 import com.k2fsa.sherpa.onnx.GenerationConfig
 import com.k2fsa.sherpa.onnx.OfflineTts
 import com.k2fsa.sherpa.onnx.OfflineTtsConfig
@@ -67,7 +68,9 @@ class SherpaTtsRuntime private constructor(
         noiseScaleW: Float = 0.8f,
         languageHint: String? = null,
     ): SynthesisOutput {
+        val engineLookupStartMs = SystemClock.elapsedRealtime()
         val tts = engine(voiceId, lengthScale, noiseScale, noiseScaleW, text, languageHint)
+        log.i { "Atlas timing: engine lookup/load=${SystemClock.elapsedRealtime() - engineLookupStartMs}ms voice=$voiceId" }
         // Clamp the speaker id to the model's actual range before
         // crossing the JNI boundary. Kokoro 1.1 ships ~50–100 named
         // speakers, but the catalog occasionally over-counts (placeholder
@@ -87,6 +90,7 @@ class SherpaTtsRuntime private constructor(
         // error instead of letting the JVM tear down the process. A
         // true native SIGSEGV inside the .so is still unrecoverable, but
         // anything raised as a Java throwable will land here.
+        val nativeGenerateStartMs = SystemClock.elapsedRealtime()
         val audio = try {
             tts.generate(text = text, sid = safeSid, speed = speed)
         } catch (t: Throwable) {
@@ -96,6 +100,7 @@ class SherpaTtsRuntime private constructor(
                 t,
             )
         }
+        log.i { "Atlas timing: native generate=${SystemClock.elapsedRealtime() - nativeGenerateStartMs}ms voice=$voiceId chars=${text.length}" }
         val shifted = if (kotlin.math.abs(pitch - 1f) < 0.001f) {
             audio.samples
         } else {
