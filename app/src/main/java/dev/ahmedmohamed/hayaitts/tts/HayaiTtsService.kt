@@ -223,48 +223,6 @@ class HayaiTtsService : TextToSpeechService() {
         AtlasTtsDiagnostics.record(applicationContext, "Android synthesis start after ${SystemClock.elapsedRealtime() - requestStartMs}ms")
         log.i { "Atlas timing: Android callback.start=${SystemClock.elapsedRealtime() - callbackStartMs}ms sinceRequest=${SystemClock.elapsedRealtime() - requestStartMs}ms" }
 
-        // Experimental phrase mode is strictly opt-in; normal Atlas speech stays buffered.
-        val phraseMode = runCatching { runBlocking { settingsRepo?.atlasPhraseMode?.first() } }.getOrNull() == true
-        if (phraseMode && text.length > 55) {
-            val splitAt = sequenceOf(
-                text.indexOf(". "), text.indexOf(", "), text.indexOf("; "),
-                text.indexOf(": "), text.indexOf("! "), text.indexOf("? ")
-            ).filter { it in 12..54 }.minOrNull()
-                ?: text.indexOf(' ', startIndex = minOf(35, text.length - 1))
-                    .takeIf { it in 12..54 }
-            if (splitAt != null) {
-                val boundary = if (text[splitAt] == ' ') splitAt else splitAt + 1
-                val phrases = listOf(text.substring(0, boundary).trim(), text.substring(boundary).trim())
-                AtlasTtsDiagnostics.record(applicationContext, "phrase experiment start lengths=${phrases.map { it.length }}")
-                try {
-                    for ((index, phrase) in phrases.withIndex()) {
-                        if (stopRequested) {
-                            callback.error()
-                            return
-                        }
-                        val began = SystemClock.elapsedRealtime()
-                        val audio = runtime.synthesize(
-                            voiceId = voice.voiceId, text = phrase, sid = sid, speed = speed,
-                            pitch = tuning.pitch, lengthScale = tuning.lengthScale,
-                            noiseScale = tuning.noiseScale, noiseScaleW = tuning.noiseScaleW,
-                            languageHint = requestLanguageHint,
-                        )
-                        AtlasTtsDiagnostics.record(applicationContext, "phrase ${index + 1} generated after ${SystemClock.elapsedRealtime() - requestStartMs}ms; inference=${SystemClock.elapsedRealtime() - began}ms samples=${audio.samples.size}")
-                        if (audio.samples.isEmpty() || !streamPcm(callback, audio.samples)) {
-                            callback.error()
-                            return
-                        }
-                        AtlasTtsDiagnostics.record(applicationContext, "phrase ${index + 1} delivered after ${SystemClock.elapsedRealtime() - requestStartMs}ms")
-                    }
-                    callback.done()
-                } catch (t: Throwable) {
-                    AtlasTtsDiagnostics.record(applicationContext, "phrase experiment failed: ${t.javaClass.simpleName}")
-                    callback.error()
-                }
-                return
-            }
-        }
-
         // Stable baseline: native generateWithCallback can stall without returning
         // a first chunk on this device. Use bounded buffered generation instead.
         val synthesisStartMs = SystemClock.elapsedRealtime()
