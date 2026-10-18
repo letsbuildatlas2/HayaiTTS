@@ -34,3 +34,8 @@ Date: 2026-10-17. Branch: feature/atlas-streaming-tts. Keep the working buffered
 - Review GitHub code and upstream issue #3492.
 - Make and validate changes on a separate experimental branch, without overwriting known-good commit.
 - Present user with exactly one APK to install only when build passes and evidence justifies testing.
+
+## Signing milestone (2026-10-18)
+- User confirmed ATLAS_KEYSTORE_BASE64 and ATLAS_STORE_PASSWORD secrets were saved in GitHub Actions.
+- CI now supports persistent PKCS12 key alias atlas-tts-signing and only uploads APK when signing secrets are present.
+- Verify actual build success, key alias, signing certificate, and artifact before user installation. Existing experimental APK probably has a different debug certificate; plan one controlled migration with a secure model backup if feasible.
