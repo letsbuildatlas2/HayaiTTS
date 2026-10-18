@@ -77,11 +77,11 @@ s = s.replace(done, '    __android_log_print(ANDROID_LOG_INFO, "AtlasNativeJNI",
 # Phone-only diagnostics: pass the final buffer through the JNI callback if
 # Kokoro produced audio but never invoked its callback. This is diagnostic,
 # not low-latency streaming, and does not change the returned audio.
-start = '    std::function<int32_t(const float *, int32_t, float)> callback_wrapper =\\n        [vm, global_callback](const float *samples, int32_t n, float) -> int32_t {'
+start = '    std::function<int32_t(const float *, int32_t, float)> callback_wrapper =\n        [vm, global_callback](const float *samples, int32_t n, float) -> int32_t {'
 assert s.count(start) == 2
-s = s.replace(start, '    int32_t native_callback_count = 0;\\n    std::function<int32_t(const float *, int32_t, float)> callback_wrapper =\\n        [vm, global_callback, &native_callback_count](const float *samples, int32_t n, float) -> int32_t {\\n      ++native_callback_count;')
+s = s.replace(start, '    int32_t native_callback_count = 0;\n    std::function<int32_t(const float *, int32_t, float)> callback_wrapper =\n        [vm, global_callback, &native_callback_count](const float *samples, int32_t n, float) -> int32_t {\n      ++native_callback_count;')
 end = '    env->DeleteGlobalRef(global_callback);'
 assert s.count(end) == 2
-s = s.replace(end, '    if (native_callback_count == 0 && !audio.samples.empty()) {\\n      __android_log_print(ANDROID_LOG_INFO, "AtlasNativeJNI", "no native chunks: testing final-buffer JNI callback");\\n      callback_wrapper(audio.samples.data(), static_cast<int32_t>(audio.samples.size()), 1.0f);\\n    }\\n' + end)
+s = s.replace(end, '    if (native_callback_count == 0 && !audio.samples.empty()) {\n      __android_log_print(ANDROID_LOG_INFO, "AtlasNativeJNI", "no native chunks: testing final-buffer JNI callback");\n      callback_wrapper(audio.samples.data(), static_cast<int32_t>(audio.samples.size()), 1.0f);\n    }\n' + end)
 p.write_text(s)
 print(f"Patched and instrumented both callback bridges in {p}")
