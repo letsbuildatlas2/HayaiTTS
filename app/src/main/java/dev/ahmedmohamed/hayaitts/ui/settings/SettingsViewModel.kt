@@ -56,6 +56,7 @@ class SettingsViewModel(
         val moveProgress: MoveProgress = MoveProgress.Idle,
         val useNnapi: Boolean = false,
         val synthesisThreads: Int = 2,
+        val atlasPhraseMode: Boolean = false,
         val maxNumSentences: Int = 2,
     ) {
         /** Locales covered by the union of installed voices. */
@@ -83,6 +84,7 @@ class SettingsViewModel(
         settings.useNnapi,
         settings.synthesisThreads,
         settings.maxNumSentences,
+        settings.atlasPhraseMode,
     ) { values ->
         SettingsUiState(
             wifiOnly = values[0] as Boolean,
@@ -95,6 +97,7 @@ class SettingsViewModel(
             useNnapi = values[6] as Boolean,
             synthesisThreads = values[7] as Int,
             maxNumSentences = values[8] as Int,
+            atlasPhraseMode = values[9] as Boolean,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -127,6 +130,10 @@ class SettingsViewModel(
 
     fun setUseNnapi(value: Boolean) {
         viewModelScope.launch { settings.setUseNnapi(value) }
+    }
+
+    fun setAtlasPhraseMode(value: Boolean) {
+        viewModelScope.launch { settings.setAtlasPhraseMode(value) }
     }
 
     fun setSynthesisThreads(value: Int) {
