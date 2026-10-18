@@ -227,7 +227,7 @@ class HayaiTtsService : TextToSpeechService() {
         // Explicitly gated native callback probe. No Android audio callback is invoked
         // from sherpa's JNI callback: this isolates native callback liveness from
         // Android audioAvailable backpressure and preserves the buffered fallback.
-        if (System.getProperty("atlas.tts.nativeCallbackProbe") == "true") {
+        if (runCatching { runBlocking { settingsRepo?.atlasPhraseMode?.first() } }.getOrNull() == true) {
             val probeStart = SystemClock.elapsedRealtime()
             val chunks = AtomicInteger(0)
             var firstChunkMs = -1L
