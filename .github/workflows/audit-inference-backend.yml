@@ -1,0 +1,45 @@
+name: Audit Kokoro inference acceleration
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - experiment/inference-backend-audit
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect bundled native inference libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p audit
+          echo '# Kokoro inference backend audit' | tee audit/report.md
+          echo '' | tee -a audit/report.md
+          echo '## Bundled AARs' | tee -a audit/report.md
+          find app/libs -maxdepth 1 -type f -name '*.aar' -print | tee -a audit/report.md
+          AAR=$(find app/libs -maxdepth 1 -type f -name '*sherpa*.aar' | head -n 1)
+          if [[ -z "$AAR" ]]; then echo 'ERROR: No sherpa AAR'; exit 1; fi
+          unzip -l "$AAR" | grep -E 'arm64-v8a/.*\.so' | tee -a audit/report.md || true
+          unzip -p "$AAR" jni/arm64-v8a/libsherpa-onnx-jni.so > audit/sherpa-jni.so
+          echo '' | tee -a audit/report.md
+          echo '## Native binary provider indicators' | tee -a audit/report.md
+          for pattern in XnnpackExecutionProvider XNNPACKExecutionProvider Xnnpack OrtSessionOptionsAppendExecutionProvider_Xnnpack QNNExecutionProvider NNAPIExecutionProvider; do
+            count=$(grep -aoc "$pattern" audit/sherpa-jni.so || true)
+            echo "$pattern: ${count:-0}" | tee -a audit/report.md
+          done
+          echo '' | tee -a audit/report.md
+          echo '## Native library dependencies' | tee -a audit/report.md
+          readelf -d audit/sherpa-jni.so | grep NEEDED | tee -a audit/report.md || true
+          echo '' | tee -a audit/report.md
+          echo '## Runtime provider selection' | tee -a audit/report.md
+          grep -n -A 2 'provider = if (useNnapi)' app/src/main/java/dev/ahmedmohamed/hayaitts/tts/SherpaTtsRuntime.kt | tee -a audit/report.md
+          echo '' | tee -a audit/report.md
+          echo 'Binary string indicators alone cannot prove runtime provider availability or model operator coverage.' | tee -a audit/report.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kokoro-inference-audit
+          path: audit/report.md
