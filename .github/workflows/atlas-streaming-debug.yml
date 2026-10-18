@@ -27,11 +27,28 @@ jobs:
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
+      - name: Configure persistent Atlas signing if secrets exist
+        env:
+          ATLAS_KEYSTORE_BASE64: ${{ secrets.ATLAS_KEYSTORE_BASE64 }}
+          ATLAS_STORE_PASSWORD: ${{ secrets.ATLAS_STORE_PASSWORD }}
+          ATLAS_KEY_PASSWORD: ${{ secrets.ATLAS_KEY_PASSWORD }}
+          ATLAS_KEY_ALIAS: ${{ secrets.ATLAS_KEY_ALIAS }}
+        run: |
+          if [[ -n "$ATLAS_KEYSTORE_BASE64" && -n "$ATLAS_STORE_PASSWORD" && -n "$ATLAS_KEY_PASSWORD" && -n "$ATLAS_KEY_ALIAS" ]]; then
+            printf %s "$ATLAS_KEYSTORE_BASE64" | base64 --decode > atlas-signing.jks
+            printf "storeFile=atlas-signing.jks\\nstorePassword=%s\\nkeyAlias=%s\\nkeyPassword=%s\\n" "$ATLAS_STORE_PASSWORD" "$ATLAS_KEY_ALIAS" "$ATLAS_KEY_PASSWORD" > signing.properties
+            echo "ATLAS_PERSISTENT_SIGNING=true" >> "$GITHUB_ENV"
+            echo "Persistent signing enabled."
+          else
+            echo "::warning::Persistent signing secrets are not configured. This build is for compilation checks only; do NOT install its APK."
+            echo "ATLAS_PERSISTENT_SIGNING=false" >> "$GITHUB_ENV"
+          fi
       - name: Build debug APK
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug --stacktrace
       - name: Upload experimental APK
+        if: env.ATLAS_PERSISTENT_SIGNING == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: atlas-hayaitts-streaming-debug
