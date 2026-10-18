@@ -35,6 +35,8 @@ class HayaiTtsService : TextToSpeechService() {
 
     @Volatile private var stopRequested: Boolean = false
     @Volatile private var lastSelectedVoiceId: String = ""
+    private val preloadLock = Any()
+    private var preloadingVoiceId: String? = null
 
     override fun onIsLanguageAvailable(lang: String?, country: String?, variant: String?): Int {
         val voices = runtimeOrNull()?.listAvailableVoices().orEmpty()
@@ -98,6 +100,30 @@ class HayaiTtsService : TextToSpeechService() {
         }
         log.i { "Atlas voice registry: onLoadVoice accepted name=$name" }
         lastSelectedVoiceId = name!!
+        // Preload the selected voice before the first synthesis request.
+        // Do not block Android's onLoadVoice binder callback: cold Kokoro
+        // initialization can take several seconds on a phone.
+        val selectedId = parseVoiceName(name).first
+        synchronized(preloadLock) {
+            if (preloadingVoiceId != selectedId) {
+                preloadingVoiceId = selectedId
+                Thread({
+                    val started = SystemClock.elapsedRealtime()
+                    try {
+                        val rate = SherpaTtsRuntime.get(applicationContext).sampleRateOf(selectedId)
+                        AtlasTtsDiagnostics.record(applicationContext,
+                            "voice preload ready voice=$selectedId sampleRate=$rate elapsed=${SystemClock.elapsedRealtime() - started}ms")
+                    } catch (t: Throwable) {
+                        AtlasTtsDiagnostics.record(applicationContext,
+                            "voice preload failed voice=$selectedId reason=${t.javaClass.simpleName}")
+                    } finally {
+                        synchronized(preloadLock) {
+                            if (preloadingVoiceId == selectedId) preloadingVoiceId = null
+                        }
+                    }
+                }, "AtlasVoicePreload").apply { isDaemon = true; start() }
+            }
+        }
         return TextToSpeech.SUCCESS
     }
 
