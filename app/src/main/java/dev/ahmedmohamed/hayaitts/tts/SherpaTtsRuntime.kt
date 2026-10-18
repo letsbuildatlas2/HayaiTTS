@@ -477,7 +477,20 @@ class SherpaTtsRuntime private constructor(
         numThreads: Int,
         maxNumSentences: Int
     ): OfflineTtsConfig {
-        val modelPath = resolveModelFile(dir, KOKORO_MODEL_CANDIDATES)
+        // Opt-in INT8 benchmark: select only a quantised model bundled alongside
+        // this exact voice. Never substitute another Kokoro version: voices.bin,
+        // tokens and lexicons must remain compatible with the model.
+        val quantised = dir.listFiles()?.filter { it.isFile && it.extension == "onnx" &&
+            (it.name.contains("int8", ignoreCase = true) || it.name.contains("quant", ignoreCase = true)) }
+            ?.sortedBy { it.name }.orEmpty()
+        val benchmarkEnabled = System.getProperty("atlas.tts.kokoroInt8Benchmark") == "true"
+        val modelPath = if (benchmarkEnabled && quantised.size == 1) {
+            log.i { "Atlas INT8 benchmark selected ${quantised.single().name} for ${dir.name}" }
+            quantised.single().absolutePath
+        } else {
+            if (benchmarkEnabled) log.w { "Atlas INT8 benchmark unavailable: expected exactly one quantised ONNX in $dir; found ${quantised.size}; using baseline" }
+            resolveModelFile(dir, KOKORO_MODEL_CANDIDATES)
+        }
         val voices = File(dir, KOKORO_VOICES_FILE)
         check(voices.isFile) { "Kokoro voice at $dir is missing $KOKORO_VOICES_FILE" }
         val tokensPath = File(dir, TOKENS_FILE).absolutePath
