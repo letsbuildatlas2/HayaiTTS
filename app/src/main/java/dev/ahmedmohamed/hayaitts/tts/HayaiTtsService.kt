@@ -131,6 +131,7 @@ class HayaiTtsService : TextToSpeechService() {
             rawText.substring(0, MAX_TEXT_LENGTH)
         } else rawText
 
+        log.i { "Atlas timing: request received chars=${text.length}" }
         val runtime = try {
             SherpaTtsRuntime.get(applicationContext)
         } catch (t: Throwable) {
@@ -166,6 +167,7 @@ class HayaiTtsService : TextToSpeechService() {
             return
         }
 
+        val settingsStartMs = SystemClock.elapsedRealtime()
         val tuningRepo = runCatching { GlobalContext.get().get<VoiceTuningRepository>() }.getOrNull()
         val tuning = tuningRepo?.let { repo ->
             runCatching { runBlocking { repo.tuningFor(voice.voiceId).first() } }.getOrNull()
@@ -185,6 +187,7 @@ class HayaiTtsService : TextToSpeechService() {
             ?: voice.speakers.firstOrNull()?.id
             ?: 0
 
+        log.i { "Atlas timing: settings/voice selection=${SystemClock.elapsedRealtime() - settingsStartMs}ms sinceRequest=${SystemClock.elapsedRealtime() - requestStartMs}ms" }
         val modelPrepareStartMs = SystemClock.elapsedRealtime()
         val sampleRate = try {
             runtime.sampleRateOf(voice.voiceId, languageHint = requestLanguageHint)
@@ -196,11 +199,14 @@ class HayaiTtsService : TextToSpeechService() {
 
         log.i { "Atlas timing: model/sample-rate lookup=${SystemClock.elapsedRealtime() - modelPrepareStartMs}ms sinceRequest=${SystemClock.elapsedRealtime() - requestStartMs}ms" }
 
+        val callbackStartMs = SystemClock.elapsedRealtime()
         if (callback.start(sampleRate, AudioFormat.ENCODING_PCM_16BIT, /* channelCount = */ 1)
             != TextToSpeech.SUCCESS
         ) {
             return
         }
+
+        log.i { "Atlas timing: Android callback.start=${SystemClock.elapsedRealtime() - callbackStartMs}ms sinceRequest=${SystemClock.elapsedRealtime() - requestStartMs}ms" }
 
         // Diagnostic baseline: bypass the native streaming callback entirely.
         // Previous builds could stall after Android onStart without producing PCM.
@@ -220,12 +226,13 @@ class HayaiTtsService : TextToSpeechService() {
                 languageHint = requestLanguageHint,
             )
             log.i { "Atlas timing: buffered generate=${SystemClock.elapsedRealtime() - synthesisStartMs}ms sinceRequest=${SystemClock.elapsedRealtime() - requestStartMs}ms samples=${output.samples.size}" }
+            val pcmStartMs = SystemClock.elapsedRealtime()
             if (output.samples.isEmpty() || !streamPcm(callback, output.samples)) {
                 log.e { "Atlas baseline: no samples or PCM delivery failed" }
                 callback.error()
                 return
             }
-            log.i { "Atlas timing: PCM delivered sinceRequest=${SystemClock.elapsedRealtime() - requestStartMs}ms" }
+            log.i { "Atlas timing: PCM delivery=${SystemClock.elapsedRealtime() - pcmStartMs}ms sinceRequest=${SystemClock.elapsedRealtime() - requestStartMs}ms" }
             callback.done()
         } catch (t: Throwable) {
             log.e(t) { "Atlas baseline: buffered synthesis failed" }
