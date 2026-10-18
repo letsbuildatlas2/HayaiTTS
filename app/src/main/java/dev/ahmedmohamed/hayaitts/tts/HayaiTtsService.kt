@@ -38,6 +38,34 @@ class HayaiTtsService : TextToSpeechService() {
     private val preloadLock = Any()
     private var preloadingVoiceId: String? = null
 
+    override fun onCreate() {
+        super.onCreate()
+        // Start warming George as soon as Android creates this service,
+        // before onLoadVoice or the first synthesis request. A missing model
+        // is harmless: normal voice resolution and synthesis remain intact.
+        Thread({
+            val started = SystemClock.elapsedRealtime()
+            try {
+                val george = SherpaTtsRuntime.get(applicationContext)
+                    .listAvailableVoices()
+                    .firstOrNull { it.voiceId == "kokoro-en-v0_19" }
+                if (george != null) {
+                    val rate = SherpaTtsRuntime.get(applicationContext)
+                        .sampleRateOf(george.voiceId)
+                    AtlasTtsDiagnostics.record(applicationContext,
+                        "service startup preload ready voice=${george.voiceId} sampleRate=$rate elapsed=${SystemClock.elapsedRealtime() - started}ms")
+                } else {
+                    AtlasTtsDiagnostics.record(applicationContext,
+                        "service startup preload skipped: George not installed")
+                }
+            } catch (t: Throwable) {
+                AtlasTtsDiagnostics.record(applicationContext,
+                    "service startup preload failed: ${t.javaClass.simpleName}")
+            }
+        }, "AtlasStartupPreload").apply { isDaemon = true; start() }
+    }
+
+
     override fun onIsLanguageAvailable(lang: String?, country: String?, variant: String?): Int {
         val voices = runtimeOrNull()?.listAvailableVoices().orEmpty()
         val requested = buildBcp47(lang, country, variant)
