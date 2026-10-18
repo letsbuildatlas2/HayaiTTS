@@ -229,6 +229,13 @@ class HayaiTtsService : TextToSpeechService() {
         val cpuStartNs = android.os.Debug.threadCpuTimeNanos()
         val power = getSystemService(Context.POWER_SERVICE) as? PowerManager
         val thermalBefore = if (android.os.Build.VERSION.SDK_INT >= 29) power?.currentThermalStatus else null
+        val activeThreads = runCatching {
+            runBlocking { settingsRepo?.synthesisThreads?.first() }
+        }.getOrNull() ?: 2
+        val activeNnapi = runCatching {
+            runBlocking { settingsRepo?.useNnapi?.first() }
+        }.getOrNull() ?: false
+        AtlasTtsDiagnostics.record(applicationContext, "benchmark config threads=$activeThreads nnapi=$activeNnapi voice=${voice.voiceId} chars=${text.length}")
         AtlasTtsDiagnostics.record(applicationContext, "buffered inference begin thermal=$thermalBefore thread=${Thread.currentThread().name}")
         try {
             val output = runtime.synthesize(
