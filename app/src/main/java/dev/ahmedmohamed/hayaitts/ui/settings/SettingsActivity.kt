@@ -219,7 +219,7 @@ fun SettingsScreen(
         *state.installedLocales.toTypedArray(),
     )
     val showStorageSection = matches(labelTotalSize, labelClearCache)
-    val showPerfSection = matches(labelNnapi, labelThreads, labelMaxSentences)
+    val showPerfSection = matches(labelNnapi, labelThreads, labelMaxSentences, "Atlas phrase experiment")
     val showUpdatesSection = matches(labelUpdateChannel, labelCurrentVersion, labelCheckUpdates, labelLastChecked)
     val showAboutSection = matches(labelAppName, labelHelp, labelLicense, labelPoweredBy)
 
@@ -432,6 +432,16 @@ fun SettingsScreen(
                             checked = state.useNnapi,
                             onCheckedChange = viewModel::setUseNnapi,
                         )
+                    },
+                )
+            }
+            if (showPerfSection && matches("Atlas phrase experiment")) item("atlas_phrase_mode") {
+                ListItem(
+                    leadingContent = { Icon(Icons.Outlined.Bolt, contentDescription = null) },
+                    headlineContent = { Text("Atlas phrase experiment") },
+                    supportingContent = { Text("Experimental early audio. Disable to restore stable buffered speech.") },
+                    trailingContent = {
+                        Switch(checked = state.atlasPhraseMode, onCheckedChange = viewModel::setAtlasPhraseMode)
                     },
                 )
             }
