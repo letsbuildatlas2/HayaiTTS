@@ -1,0 +1,78 @@
+name: Kokoro INT8 model feasibility
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - experiment/kokoro-quantized-benchmark
+permissions:
+  contents: read
+jobs:
+  quantize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install ONNX tooling
+        run: python -m pip install --quiet "onnxruntime==1.23.2" "onnx==1.19.1" numpy
+      - name: Fetch canonical George-compatible Kokoro model
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --output /tmp/kokoro.tar.bz2 "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2"
+          mkdir -p models
+          tar -xjf /tmp/kokoro.tar.bz2 -C models
+          find models -name '*.onnx' -printf '%p %s bytes\n'
+      - name: Quantize and validate graph
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json, time, traceback
+          import onnxruntime as ort
+          from onnxruntime.quantization import quantize_dynamic, QuantType
+          root=Path('models')
+          original=next(root.rglob('model.onnx'))
+          out=Path('kokoro-int8-matmul.onnx')
+          report={'source':str(original),'source_bytes':original.stat().st_size,'onnxruntime':ort.__version__}
+          try:
+              t=time.perf_counter()
+              quantize_dynamic(str(original),str(out),op_types_to_quantize=['MatMul'],weight_type=QuantType.QInt8)
+              report['quantization_seconds']=round(time.perf_counter()-t,2)
+              report['int8_bytes']=out.stat().st_size
+              report['size_reduction_pct']=round(100*(1-out.stat().st_size/original.stat().st_size),2)
+              for label,path in [('original',original),('int8',out)]:
+                  t=time.perf_counter()
+                  session=ort.InferenceSession(str(path),providers=['CPUExecutionProvider'])
+                  report[label+'_load_seconds']=round(time.perf_counter()-t,2)
+                  report[label+'_inputs']=[{'name':i.name,'shape':i.shape,'type':i.type} for i in session.get_inputs()]
+                  report[label+'_outputs']=[{'name':i.name,'shape':i.shape,'type':i.type} for i in session.get_outputs()]
+              report['status']='both graphs load on CPU; Android audio speed and voice quality NOT yet tested'
+          except Exception as exc:
+              report['status']='failed'
+              report['error']=repr(exc)
+              report['traceback']=traceback.format_exc()[-4000:]
+          Path('report.json').write_text(json.dumps(report,indent=2))
+          print(json.dumps(report,indent=2))
+          if report['status']=='failed': raise SystemExit(1)
+          PY
+      - name: Publish validation report
+        if: always()
+        run: |
+          if [ -f report.json ]; then
+            echo '## Kokoro quantization feasibility' >> "$GITHUB_STEP_SUMMARY"
+            echo '\`\`\`json' >> "$GITHUB_STEP_SUMMARY"
+            cat report.json >> "$GITHUB_STEP_SUMMARY"
+            echo '\`\`\`' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kokoro-int8-feasibility
+          path: |
+            report.json
+            kokoro-int8-matmul.onnx
+          if-no-files-found: warn
+          retention-days: 7
