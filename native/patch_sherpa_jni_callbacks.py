@@ -62,5 +62,17 @@ for arg in ("config", "gen_config"):
     needle = f"    audio = tts->Generate(p_text, {arg}, callback_wrapper);\n  }} else {{"
     assert s.count(needle) == 1, f"Unexpected Generate signature for {arg}"
     s = s.replace(needle, f"    audio = tts->Generate(p_text, {arg}, callback_wrapper);\n    env->DeleteGlobalRef(global_callback);\n  }} else {{")
+# Instrument native JNI entry and callback dispatch without logging speech contents.
+assert '#include <android/log.h>' not in s
+s = s.replace('#include <string>', '#include <android/log.h>\n#include <string>', 1)
+entry = '  if (callback) {\n    JavaVM *vm = nullptr;'
+assert s.count(entry) == 2
+s = s.replace(entry, '  if (callback) {\n    __android_log_print(ANDROID_LOG_INFO, "AtlasNativeJNI", "callback bridge entered");\n    JavaVM *vm = nullptr;')
+dispatch = '      jfloatArray samples_arr = current_env->NewFloatArray(n);'
+assert s.count(dispatch) == 2
+s = s.replace(dispatch, '      __android_log_print(ANDROID_LOG_INFO, "AtlasNativeJNI", "native callback invoked samples=%d", n);\n' + dispatch)
+done = '    env->DeleteGlobalRef(global_callback);'
+assert s.count(done) == 2
+s = s.replace(done, '    __android_log_print(ANDROID_LOG_INFO, "AtlasNativeJNI", "native Generate returned samples=%zu", audio.samples.size());\n' + done)
 p.write_text(s)
-print(f"Patched both callback bridges in {p}")
+print(f"Patched and instrumented both callback bridges in {p}")
