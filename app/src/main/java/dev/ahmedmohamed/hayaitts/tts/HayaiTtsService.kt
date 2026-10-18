@@ -19,7 +19,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.koin.core.context.GlobalContext
 import java.util.Locale
-import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * System-wide TTS engine. Iterates every voice the user has installed
@@ -224,56 +223,13 @@ class HayaiTtsService : TextToSpeechService() {
         AtlasTtsDiagnostics.record(applicationContext, "Android synthesis start after ${SystemClock.elapsedRealtime() - requestStartMs}ms")
         log.i { "Atlas timing: Android callback.start=${SystemClock.elapsedRealtime() - callbackStartMs}ms sinceRequest=${SystemClock.elapsedRealtime() - requestStartMs}ms" }
 
-        // Explicitly gated native callback probe. No Android audio callback is invoked
-        // from sherpa's JNI callback: this isolates native callback liveness from
-        // Android audioAvailable backpressure and preserves the buffered fallback.
+        // Safety: the native callback experiment repeatedly hung on the user's
+        // device (including 20:15). Ignore the legacy experiment toggle and
+        // always use the proven buffered synthesis path until a safe bounded
+        // native streaming implementation is available.
         if (runCatching { runBlocking { settingsRepo?.atlasPhraseMode?.first() } }.getOrNull() == true) {
-            val probeStart = SystemClock.elapsedRealtime()
-            val chunks = AtomicInteger(0)
-            var firstChunkMs = -1L
-            AtlasTtsDiagnostics.record(applicationContext, "native callback probe begin")
-            try {
-                val probe = runtime.synthesizeStreaming(
-                    voiceId = voice.voiceId, text = text, sid = sid, speed = speed,
-                    pitch = tuning.pitch, lengthScale = tuning.lengthScale,
-                    noiseScale = tuning.noiseScale, noiseScaleW = tuning.noiseScaleW,
-                    languageHint = requestLanguageHint,
-                ) { chunk ->
-                    if (chunks.getAndIncrement() == 0) {
-                        firstChunkMs = SystemClock.elapsedRealtime() - probeStart
-                        AtlasTtsDiagnostics.record(applicationContext,
-                            "native callback first chunk after ${firstChunkMs}ms samples=${chunk.size} thread=${Thread.currentThread().name}")
-                    }
-                    if (stopRequested) 0 else 1
-                }
-                AtlasTtsDiagnostics.record(applicationContext,
-                    "native callback probe complete elapsed=${SystemClock.elapsedRealtime() - probeStart}ms chunks=${chunks.get()} first=${firstChunkMs}ms samples=${probe.samples.size}")
-                // Read only this app process's native diagnostics; no PC or READ_LOGS
-                // permission required on devices permitting self-process logcat.
-                runCatching {
-                    val process = ProcessBuilder("logcat", "-d", "-t", "150", "--pid=${android.os.Process.myPid()}", "AtlasNativeJNI:I", "*:S")
-                        .redirectErrorStream(true).start()
-                    val reader = process.inputStream.bufferedReader()
-                    val lines = mutableListOf<String>()
-                    repeat(40) {
-                        val line = reader.readLine() ?: return@repeat
-                        if (line.contains("AtlasNativeJNI")) lines.add(line.take(240))
-                    }
-                    process.destroy()
-                    AtlasTtsDiagnostics.record(applicationContext,
-                        "native logcat lines=${lines.size}; ${lines.takeLast(6).joinToString(" | ")}")
-                }.onFailure {
-                    AtlasTtsDiagnostics.record(applicationContext,
-                        "native logcat unavailable: ${it.javaClass.simpleName}")
-                }
-                if (!stopRequested && probe.samples.isNotEmpty() && streamPcm(callback, probe.samples)) {
-                    callback.done()
-                } else callback.error()
-            } catch (t: Throwable) {
-                AtlasTtsDiagnostics.record(applicationContext, "native callback probe failed: ${t.javaClass.simpleName}")
-                callback.error()
-            }
-            return
+            AtlasTtsDiagnostics.record(applicationContext,
+                "native callback experiment disabled for safety; using buffered synthesis")
         }
 
         // Stable baseline: native generateWithCallback can stall without returning
